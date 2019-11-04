@@ -1,0 +1,332 @@
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Project Name and Stage"
+        Parameters:
+          - ProjectName
+          - Stage
+      - Label:
+          default: "Backend parameters"
+        Parameters:
+          - GithubBackendRepoUrl
+          - GithubBackendBranch
+
+      - Label:
+          default: "Frontend parameters"
+        Parameters:
+          - GitHubFrontendRepositoryURL
+          - GitHubFrontEndBranch
+
+    ParameterLabels:
+      ProjectName:
+        default: Project Name
+      Stage:
+        default: Stage
+
+Parameters:
+  # Common parameters
+  ProjectName:
+    Type: String
+    Default: seeds-gateway
+    Description: "Enter the project name. This will also be the name of the s3 bucket that contains the build and deploy artifacts, therefore it must be a valid bucket name with only lowercase letters, numbers, periods (.), and dashes (-)."
+  Stage:
+    Type: String
+    AllowedValues: [develop, production, release]
+  GithubBackendRepoUrl:
+    Type: String
+    Default: "https://github.com/ZiadAliKhalifa/seedsgateway-serverless"
+  GithubBackendBranch:
+    Type: String
+    Default: develop
+  GitHubFrontEndBranch:
+    Type: String
+    Default: develop
+  GitHubFrontendRepositoryURL:
+    Type: String
+    Default: "https://github.com/ZiadAliKhalifa/seedsgateway"
+
+Resources:
+  # Backend resources
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Join
+        - "-"
+        - - !Ref ProjectName
+          - !Ref Stage
+          - "artifacts-bucket"
+
+  CodeBuildServiceRoleBackend:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:*
+                  # - logs:CreateLogGroup
+                  # - logs:CreateLogStream
+                  # - logs:PutLogEvents
+                  - ecr:GetAuthorizationToken
+                  - iam:*
+                  # - iam:ListPolicies
+                  # - iam:CreateRole
+                  # - iam:AttachRolePolicy
+                  # - iam:PutRolePolicy
+                  # - iam:DetachRolePolicy
+                  # - iam:GetRolePolicy
+                  # - iam:GetRole
+                  # - iam:PassRole
+                  - apigateway:*
+                  # - apigateway:POST
+                  # - apigateway:PATCH
+                  # - apigateway:GET
+                  - states:*
+                  - lambda:*
+                  # - lambda:PublishLayerVersion
+                  # - lambda:GetFunction
+                  # - lambda:GetLayerVersion
+                  # - lambda:CreateFunction
+                  # - lambda:AddPermission
+                  # - lambda:GetFunctionConfiguration
+                  # - lambda:UpdateFunctionConfiguration
+                  # - lambda:UpdateFunctionCode
+                  # - lambda:UpdateEventSourceMapping
+                  # - lambda:UpdateAlias
+                  - s3:*
+                  - cloudwatch:*
+                  - states:*
+                  # - s3:CreateBucket
+                  - cloudformation:*
+                Resource: "*"
+              - Action:
+                  - s3:*
+                Effect: Allow
+                Resource:
+                  - !Sub arn:aws:s3:::${ArtifactBucket}
+                  - arn:aws:s3:::*/*
+
+  CodeBuildProjectBackend:
+    Type: "AWS::CodeBuild::Project"
+    Properties:
+      Name: !Join
+        - "-"
+        - - !Ref ProjectName
+          - !Ref Stage
+          - "backend"
+          - "CICD"
+      ServiceRole: !GetAtt
+        - CodeBuildServiceRoleBackend
+        - Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:2.0
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: REGION
+            Value: !Ref "AWS::Region"
+          - Name: PROJECT_NAME_X
+            Value: !Ref ProjectName
+          - Name: STAGE
+            Value: !Ref Stage
+          - Name: STACK_NAME
+            Value: !Join
+              - "-"
+              - - !Ref ProjectName
+                - !Ref Stage
+                - "SAM"
+          - Name: S3_BUCKET_NAME
+            Value: !Ref ArtifactBucket
+      Source:
+        Auth:
+          Type: OAUTH
+        Location: !Ref GithubBackendRepoUrl
+        ReportBuildStatus: true
+        Type: GITHUB
+        BuildSpec: buildspec.yml
+      Triggers:
+        FilterGroups:
+          - - Type: EVENT
+              Pattern: PUSH
+            - Type: HEAD_REF
+              Pattern: !Sub "^refs/heads/${GithubBackendBranch}$"
+              ExcludeMatchedPattern: false
+        Webhook: true
+
+  # Frontend resources
+  DeploymentBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: BucketOwnerFullControl
+      BucketName: !Join ["-", [!Ref ProjectName, !Ref Stage, "bucket"]]
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+
+  DeploymentBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DeploymentBucket
+      PolicyDocument:
+        Statement:
+          - Sid: "PublicReadGetObject"
+            Action:
+              - "s3:GetObject"
+            Effect: "Allow"
+            Resource:
+              Fn::Join:
+                - ""
+                - - "arn:aws:s3:::"
+                  - Ref: "DeploymentBucket"
+                  - "/*"
+            Principal: "*"
+
+  CodeBuildCIServiceRoleFrontend:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join
+        - "-"
+        - - !Ref ProjectName
+          - !Ref Stage
+          - !Ref "AWS::Region"
+          - "ui-CI-codebuild-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Resource: "*"
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - ecr:GetAuthorizationToken
+
+  CodeBuildCIFrontend:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Join ["-", [!Ref ProjectName, !Ref Stage, "ui", "CI"]]
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Source:
+        Auth:
+          Type: OAUTH
+        Location: !Ref GitHubFrontendRepositoryURL
+        ReportBuildStatus: true
+        Type: GITHUB
+        BuildSpec: buildspec_ci.yml
+      Environment:
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/nodejs:10.14.1
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: REACT_APP_ENV
+            Value: !Ref Stage
+      ServiceRole: !Ref CodeBuildCIServiceRoleFrontend
+      Triggers:
+        FilterGroups:
+          - - Type: EVENT
+              Pattern: PULL_REQUEST_CREATED,PULL_REQUEST_UPDATED,PULL_REQUEST_REOPENED
+            - Type: BASE_REF
+              Pattern: !Sub "^refs/heads/${GitHubFrontEndBranch}$"
+              ExcludeMatchedPattern: false
+        Webhook: true
+
+  CodeBuildCICDServiceRoleFrontend:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join
+        - "-"
+        - - !Ref ProjectName
+          - !Ref Stage
+          - !Ref "AWS::Region"
+          - "ui-CICD-codebuild-role"
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Resource: "*"
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - ecr:GetAuthorizationToken
+                  - s3:PutAccountPublicAccessBlock
+                  - s3:GetAccountPublicAccessBlock
+                  - s3:ListAllMyBuckets
+                  - s3:ListJobs
+                  - s3:CreateJob
+                  - s3:HeadBucket
+                  - s3:ListObjectsV2
+              - Action:
+                  - s3:*
+                Effect: Allow
+                Resource:
+                  - !Sub arn:aws:s3:::${DeploymentBucket}
+                  - arn:aws:s3:::*/*
+
+  CodeBuildCICDFrontend:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Join ["-", [!Ref ProjectName, !Ref Stage, "ui", "CICD"]]
+      Artifacts:
+        Type: NO_ARTIFACTS
+      BadgeEnabled: true
+      Source:
+        Auth:
+          Type: OAUTH
+        Location: !Ref GitHubFrontendRepositoryURL
+        ReportBuildStatus: true
+        Type: GITHUB
+        BuildSpec: buildspec_cd.yml
+      Environment:
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/nodejs:10.14.1
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: S3_BUCKET
+            Value: !Ref DeploymentBucket
+          - Name: REACT_APP_ENV
+            Value: !Ref Stage
+      ServiceRole: !Ref CodeBuildCICDServiceRoleFrontend
+      Triggers:
+        FilterGroups:
+          - - Type: EVENT
+              Pattern: PUSH
+            - Type: HEAD_REF
+              Pattern: !Sub "^refs/heads/${GitHubFrontEndBranch}$"
+              ExcludeMatchedPattern: false
+        Webhook: true
