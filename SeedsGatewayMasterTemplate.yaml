@@ -32,7 +32,7 @@ Parameters:
     Description: "Enter the project name. This will also be the name of the s3 bucket that contains the build and deploy artifacts, therefore it must be a valid bucket name with only lowercase letters, numbers, periods (.), and dashes (-)."
   Stage:
     Type: String
-    AllowedValues: [develop, production, release]
+    AllowedValues: [develop, test, production, release]
   GithubBackendRepoUrl:
     Type: String
     Default: "https://github.com/ZiadAliKhalifa/seedsgateway-serverless"
