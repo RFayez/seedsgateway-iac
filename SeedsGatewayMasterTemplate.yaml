@@ -239,7 +239,7 @@ Resources:
         Type: GITHUB
         BuildSpec: buildspec_ci.yml
       Environment:
-        ComputeType: BUILD_GENERAL1_MEDIUM
+        ComputeType: BUILD_GENERAL1_SMALL
         Image: aws/codebuild/nodejs:10.14.1
         Type: LINUX_CONTAINER
         EnvironmentVariables:
